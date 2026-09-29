@@ -1,9 +1,9 @@
 package main
 
 import (
-	tinyworker "github.com/thorn/tiny-worker"
-	"github.com/thorn/tiny-worker/router"
-	"github.com/thorn/tiny-worker/runtime/cloudflare"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
+	"github.com/phongsathornpt/tiny-worker/router"
+	"github.com/phongsathornpt/tiny-worker/runtime/cloudflare"
 )
 
 // requestID demonstrates request-scoped values: middleware generates an ID,
@@ -23,6 +23,7 @@ func main() {
 		}
 	}
 
+	r.Handle("GET", "/", text("tiny-worker hello example\n\nroutes:\n  GET  /hello\n  POST /echo\n  GET  /users/:id\n  GET  /trace\n  GET  /whoami\n  GET  /panic\n"))
 	r.Handle("GET", "/hello", text("hello"))
 	r.Handle("GET", "/panic", func(*tinyworker.Request) (*tinyworker.Response, error) {
 		panic("boom: deliberate panic for testing recovery")

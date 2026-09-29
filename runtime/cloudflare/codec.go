@@ -5,7 +5,7 @@ package cloudflare
 import (
 	"syscall/js"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 func bytesFromJS(value js.Value) []byte {

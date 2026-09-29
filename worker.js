@@ -15,8 +15,24 @@ function freshRuntime() {
 function boot() {
   if (ready) return ready;
   ready = WebAssembly.instantiate(wasm, go.importObject)
-    .then(({ instance }) => {
-      go.run(instance);
+    .then((result) => {
+      // Bundlers hand us a pre-compiled WebAssembly.Module (workerd), where
+      // instantiate() resolves to the Instance itself. When given raw bytes
+      // (tests, plain Node), it resolves to { module, instance }.
+      const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+      if (!instance || !instance.exports) {
+        throw new Error("tiny-worker: instantiate produced no instance");
+      }
+      // Runs main() up to its event loop; only resolves if the program exits.
+      const runP = go.run(instance);
+      // Diagnostic for early exits: a bridge-less exit means the Go program
+      // crashed during init (its panic text goes to runtime stdout, which is
+      // not visible in worker logs).
+      runP.then(
+        (code) => console.error("tiny-worker: go program exited early, code=", code,
+          "bridge=", typeof globalThis.tinyWorkerFetch),
+        () => {},
+      );
       if (!globalThis.tinyWorkerFetch) throw new Error("tiny-worker bridge unavailable");
     })
     .catch((err) => {

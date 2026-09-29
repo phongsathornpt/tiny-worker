@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 func TestMatchStaticAndParam(t *testing.T) {

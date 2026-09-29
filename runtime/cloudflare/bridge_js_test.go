@@ -10,7 +10,7 @@ import (
 	"syscall/js"
 	"testing"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 func buildApp(t *testing.T, handler tinyworker.Handler) *tinyworker.App {

@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: [main]
@@ -32,13 +31,26 @@ jobs:
       - name: Bridge tests (js/wasm in browser)
         run: GOOS=js GOARCH=wasm go test -exec wasmbrowsertest -v ./runtime/...
 
-      - name: Build TinyGo wasm
+      - name: Install TinyGo
         run: |
           curl -sSfL https://github.com/tinygo-org/tinygo/releases/download/v0.42.0/tinygo0.42.0.linux-amd64.tar.gz | tar -xz
           sudo mv tinygo /usr/local/tinygo
           sudo ln -sf /usr/local/tinygo/bin/tinygo /usr/local/bin/tinygo
           tinygo version
-          make wasm
+
+      # Pinned to the version the committed size baseline was recorded with,
+      # so the gate compares like for like (wasm-opt output varies by release).
+      - name: Install binaryen
+        run: |
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar -xz
+          sudo mv binaryen-version_133/bin/wasm-opt /usr/local/bin/
+          wasm-opt --version
+
+      - name: Build wasm + size gate
+        run: make size-check
+
+      - name: Smoke test the built artifact
+        run: make smoke
 
       - name: Wrangler dry-run bundle
         run: npx wrangler deploy --dry-run --outdir=dist

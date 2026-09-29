@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 type node struct {

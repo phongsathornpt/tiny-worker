@@ -2,22 +2,29 @@ package tinyworker
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // Recover converts panics into a 500 StatusError instead of letting them
-// escape the handler. The bridge also recovers, but recovering here keeps
-// the Go runtime healthy with a proper error value for outer middleware
-// (e.g. LogRequests) to observe.
+// escape the handler. The bridge also recovers, but recovering here keeps the
+// Go runtime healthy with a proper error value for outer middleware (e.g.
+// LogRequests) to observe.
+//
+// This only fires where the Go runtime can unwind: stock Go
+// (GOOS=js GOARCH=wasm) builds and the native/browser test suites. TinyGo does
+// not unwind for panics in any -panic strategy, so in production builds a
+// panic traps and worker.js's rebuild-and-retry turns it into a 500 instead.
+// Keep Recover in the chain: it is what makes panic behavior correct on the
+// runtimes that support recovering.
 func Recover() Middleware {
 	return func(next Handler) Handler {
 		return func(req *Request) (res *Response, err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					println("tiny-worker: recovered panic:", fmt.Sprint(r))
-					err = NewStatusError(500, fmt.Errorf("internal server error"))
+					println("tiny-worker: recovered panic:", panicValue(r))
+					err = NewStatusError(500, errors.New("internal server error"))
 					res = nil
 				}
 			}()
@@ -73,7 +80,7 @@ func CORS(opts CORSOptions) Middleware {
 
 			if req.Method == "OPTIONS" && isPreflight(req) {
 				if !allowed {
-					return nil, NewStatusError(403, fmt.Errorf("cors: origin not allowed"))
+					return nil, NewStatusError(403, errors.New("cors: origin not allowed"))
 				}
 				res := &Response{Status: 204}
 				setHeader(res, "Access-Control-Allow-Origin", matchOrigin(origins, origin))
@@ -100,6 +107,31 @@ func CORS(opts CORSOptions) Middleware {
 			}
 			return res, err
 		}
+	}
+}
+
+// panicValue renders a recovered panic value without fmt (see status.go's
+// note on keeping the formatting machinery out of the wasm). Mirrors
+// fmt.Sprint for the shapes panic values take; anything else logs "panic".
+func panicValue(v any) string {
+	switch x := v.(type) {
+	case error:
+		return x.Error()
+	case string:
+		return x
+	case int:
+		return strconv.Itoa(x)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	default:
+		if s, ok := v.(interface{ String() string }); ok {
+			return s.String()
+		}
+		return "panic"
 	}
 }
 

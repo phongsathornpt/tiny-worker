@@ -1,10 +1,5 @@
 package tinyworker
 
-import (
-	"net/url"
-	"strings"
-)
-
 // Handler processes a request and returns a response or an error.
 type Handler func(*Request) (*Response, error)
 
@@ -82,26 +77,9 @@ func (a *App) dispatchRouter(req *Request) (*Response, error) {
 }
 
 // ParsePath extracts the path portion of a URL, dropping the query string
-// and fragment. Bare paths pass through unchanged.
+// and fragment. Bare paths pass through unchanged. Implemented without
+// net/url (see path.go) so the wasm stays small; net/url-based behavior is
+// pinned by differential tests in path_test.go.
 func ParsePath(raw string) string {
-	if raw == "" {
-		return "/"
-	}
-	if !strings.Contains(raw, "://") {
-		origin := raw
-		if i := strings.IndexAny(origin, "?#"); i >= 0 {
-			origin = origin[:i]
-		}
-		if origin == "" {
-			return "/"
-		}
-		return origin
-	}
-	if u, err := url.Parse(raw); err == nil {
-		if u.Path == "" {
-			return "/"
-		}
-		return u.Path
-	}
-	return "/"
+	return parseURLPath(raw)
 }

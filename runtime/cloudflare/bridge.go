@@ -4,10 +4,10 @@ package cloudflare
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 	"syscall/js"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 var app *tinyworker.App
@@ -35,7 +35,7 @@ func fetch(_ js.Value, args []js.Value) any {
 func safeServe(in js.Value) (out any) {
 	defer func() {
 		if r := recover(); r != nil {
-			println("tiny-worker: recovered panic:", fmt.Sprint(r))
+			println("tiny-worker: recovered panic:", panicString(r))
 			out = response(500, nil, []byte("internal server error"))
 		}
 	}()
@@ -85,6 +85,32 @@ func statusMessage(se *tinyworker.StatusError) string {
 		return se.Err.Error()
 	}
 	return "error"
+}
+
+// panicString renders a recovered panic value without fmt (which would drag
+// its formatting graph into the wasm). Mirrors fmt.Sprint for the shapes a
+// panic value takes: error, stringer, string, common scalars, else a
+// constant (rare in practice; deliberate panics are strings or errors).
+func panicString(v any) string {
+	switch x := v.(type) {
+	case error:
+		return x.Error()
+	case string:
+		return x
+	case int:
+		return strconv.Itoa(x)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	default:
+		if s, ok := v.(interface{ String() string }); ok {
+			return s.String()
+		}
+		return "panic"
+	}
 }
 
 // bodySize reads byteLength without copying anything into linear memory.

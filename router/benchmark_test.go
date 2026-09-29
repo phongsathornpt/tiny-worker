@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	tinyworker "github.com/thorn/tiny-worker"
+	tinyworker "github.com/phongsathornpt/tiny-worker"
 )
 
 func benchmarkRouter() *Router {
@@ -31,5 +31,37 @@ func BenchmarkMatchParam(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		r.Match("GET", "/api/v1/resource99/123456")
+	}
+}
+
+// Benchmarks for Lookup, the path the App actually dispatches through.
+func BenchmarkLookupStatic(b *testing.B) {
+	r := benchmarkRouter()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := r.Lookup("GET", "/api/v1/resource99"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLookupParam(b *testing.B) {
+	r := benchmarkRouter()
+	b.ReportAllocs()
+	for b.Loop() {
+		h, _, err := r.Lookup("GET", "/api/v1/resource99/123456")
+		if err != nil || h == nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLookupMethodNotAllowed(b *testing.B) {
+	r := benchmarkRouter()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := r.Lookup("POST", "/api/v1/resource99"); err == nil {
+			b.Fatal("expected 405")
+		}
 	}
 }

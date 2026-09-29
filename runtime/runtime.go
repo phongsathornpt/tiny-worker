@@ -1,6 +1,6 @@
 package runtime
 
-import tinyworker "github.com/thorn/tiny-worker"
+import tinyworker "github.com/phongsathornpt/tiny-worker"
 
 // Adapter binds the framework core to a concrete execution environment.
 type Adapter interface {

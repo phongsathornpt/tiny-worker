@@ -2,7 +2,7 @@ package tinyworker
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 )
 
 // ErrNotFound is returned when no route matches a request path.
@@ -21,11 +21,13 @@ type StatusError struct {
 	Err     error
 }
 
+// Error renders the status and message. Built with concatenation rather than
+// fmt so the format machinery stays out of the wasm binary.
 func (e *StatusError) Error() string {
 	if e.Err != nil {
-		return fmt.Sprintf("tinyworker: %d: %v", e.Status, e.Err)
+		return "tinyworker: " + strconv.Itoa(e.Status) + ": " + e.Err.Error()
 	}
-	return fmt.Sprintf("tinyworker: status error %d", e.Status)
+	return "tinyworker: status error " + strconv.Itoa(e.Status)
 }
 
 // Unwrap exposes both the human message (if any) and the status-derived

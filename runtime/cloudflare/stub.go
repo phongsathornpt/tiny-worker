@@ -2,7 +2,7 @@
 
 package cloudflare
 
-import tinyworker "github.com/thorn/tiny-worker"
+import tinyworker "github.com/phongsathornpt/tiny-worker"
 
 // Register is a no-op outside the WASM target. The real bridge in bridge.go
 // applies to any js/wasm target (stock Go and TinyGo); the WASM-free build
