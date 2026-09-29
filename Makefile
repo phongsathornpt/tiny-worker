@@ -1,4 +1,4 @@
-.PHONY: test fmt check wasm wasm-rest wasm-test install-wasmbrowsertest install-binaryen bench size-baseline size-check smoke dry-run deploy cli
+.PHONY: test fmt check wasm wasm-rest wasm-test install-wasmbrowsertest install-binaryen bench size-baseline size-check smoke dry-run deploy cli site-generate site-build site-dev site-deploy
 
 TINYGO ?= $(if $(wildcard .tools/tinygo/bin/tinygo),.tools/tinygo/bin/tinygo,tinygo)
 WASM_OPT ?= $(if $(wildcard .tools/binaryen/bin/wasm-opt),.tools/binaryen/bin/wasm-opt,$(shell command -v wasm-opt 2>/dev/null))
@@ -8,6 +8,7 @@ REST_SIZE_BASELINE_FILE ?= testdata/wasm-size-rest-baseline.txt
 
 test:
 	go test ./...
+	cd site && go test ./...
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './.tools/*')
@@ -106,3 +107,20 @@ cli:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/tiny-worker ./cmd/tiny-worker
 	@echo "installed $(BIN_DIR)/tiny-worker"
+
+# The open-source project site uses templ for HTML and the framework's CLI for
+# the Cloudflare Worker bundle. Wrangler publishes site/public as static assets.
+site-generate:
+	templ generate -path site
+	cd site && go run ./sitegen
+
+site-build: site-generate
+	@mkdir -p .tools
+	go build -o .tools/tiny-worker-site-cli ./cmd/tiny-worker
+	cd site && ../.tools/tiny-worker-site-cli build
+
+site-dev: site-build
+	npx wrangler dev --config wrangler.site.jsonc --persist-to .wrangler/site-state
+
+site-deploy: site-build
+	npx wrangler deploy --config wrangler.site.jsonc

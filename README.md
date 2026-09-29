@@ -12,7 +12,7 @@ request-scoped values, and an optional typed REST layer.
 The core hello worker is **42.8 KB gzipped**. Importing the REST package adds
 JSON support only when you need it.
 
-**Guide:** [Install](#install) · [Quickstart](#quickstart) · [Examples](#examples) ·
+**Guide:** [Project site](#project-site) · [Install](#install) · [Quickstart](#quickstart) · [Examples](#examples) ·
 [CLI](#cli) · [Performance](#performance) · [Framework guide](#framework-guide) ·
 [Testing and development](#testing-and-development)
 
@@ -28,6 +28,28 @@ go get github.com/phongsathornpt/tiny-worker
 To install the companion CLI, see [CLI installation](#install-the-cli). Worker
 builds require [TinyGo](https://tinygo.org/getting-started/install/). Binaryen
 (`wasm-opt`) is optional; without it, builds warn and skip size optimization.
+
+## Project site
+
+Read the documentation at [tiny-worker-site.thornz.workers.dev](https://tiny-worker-site.thornz.workers.dev/).
+
+The open-source project site uses templ at build time to generate HTML,
+tiny-worker for interactive fragment routes, htmx 4.0 for progressive
+enhancement, and custom CSS. Generated pages and assets are served by Cloudflare;
+the TinyGo Worker handles the htmx fragment endpoints. The site is a nested Go
+module so its templ dependency does not enter the framework's dependency graph.
+
+Install the pinned templ generator before building the site:
+
+```bash
+go install github.com/a-h/templ/cmd/templ@v0.3.1020
+```
+
+```bash
+make site-generate  # templ components -> static pages and Worker fragments
+make site-dev       # build and run the site with Wrangler
+make site-deploy    # deploy using wrangler.site.jsonc
+```
 
 ## Quickstart
 
@@ -75,7 +97,7 @@ func main() {
 Install the [CLI](#install-the-cli), then scaffold, build, and run it:
 
 ```
-tiny-worker new myworker && cd myworker   # main.go + go.mod + wrangler.jsonc
+tiny-worker new myworker && cd myworker   # REST API scaffold with Clean Architecture
 tiny-worker dev                           # build wasm, then `wrangler dev`
 ```
 
@@ -246,12 +268,18 @@ not found. From a source checkout, `make cli` installs to
 The CLI commands are:
 
 ```
-tiny-worker new myworker       # scaffold a project (main.go, go.mod, wrangler.jsonc)
+tiny-worker new myworker       # scaffold a Clean Architecture REST API project
 tiny-worker routes             # list router.Handle registrations found in source
 tiny-worker build              # TinyGo -> dist/worker.wasm + worker.js glue
 tiny-worker dev                # build + wrangler dev
 tiny-worker deploy             # build + wrangler deploy
 ```
+
+The scaffold includes `internal/handler`, `internal/usecase`, `internal/model`,
+`internal/repository`, `pkg/middleware`, and `pkg/utils`, plus versioned CRUD
+routes under `/api/v1/users` and a `/healthz` endpoint. Its in-memory
+repository is an example only; Worker isolates are ephemeral, so production
+data needs durable storage.
 
 Building a worker requires TinyGo; Binaryen (`wasm-opt`) is optional. `dev`
 and `deploy` also use `npx wrangler` (Node.js/npm required). To install

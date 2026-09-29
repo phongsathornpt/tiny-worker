@@ -1,0 +1,45 @@
+/* Hallmark · macrostructure: Index-First · tone: minimal docs-first · theme: Cobalt · anchor hue: 256 */
+:root {
+	color-scheme: light;
+	--color-paper: oklch(98.5% 0.004 250);
+	--color-paper-2: oklch(96.5% 0.008 250);
+	--color-ink: oklch(24% 0.02 258);
+	--color-ink-2: oklch(34% 0.018 257);
+	--color-muted: oklch(52% 0.018 257);
+	--color-rule: oklch(88% 0.012 255);
+	--color-rule-2: oklch(74% 0.016 255);
+	--color-accent: oklch(58% 0.2 256);
+	--color-accent-ink: oklch(98.5% 0.004 250);
+	--color-graphite: oklch(22% 0.016 260);
+	--color-graphite-ink: oklch(94% 0.008 250);
+	--color-danger: oklch(56% 0.16 25);
+	--color-code-rule: oklch(39% 0.018 260);
+	--color-backdrop: oklch(24% 0.02 258 / 0.28);
+	--shadow-code: 0 1px 2px oklch(24% 0.02 258 / 0.05);
+	--shadow-palette: 0 1rem 3rem oklch(24% 0.02 258 / 0.18);
+	--font-display: "Space Grotesk", system-ui, sans-serif;
+	--font-body: "Inter", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, monospace;
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-sm-md: 0.75rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2rem;
+	--space-2xl: 3rem;
+	--space-3xl: 4rem;
+	--text-sm: 0.875rem;
+	--text-base: 1rem;
+	--text-lg: 1.125rem;
+	--text-xl: 1.375rem;
+	--text-2xl: 1.875rem;
+	--text-display: clamp(2.5rem, 4vw + 1rem, 4.5rem);
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	--dur-fast: 140ms;
+	--dur-normal: 220ms;
+	--rule-hairline: 1px;
+	--radius-tight: 6px;
+	--radius-code: 10px;
+}

@@ -1,0 +1,12 @@
+{
+  "name": "tiny-worker-site",
+  "main": "./site/worker.js",
+  "compatibility_date": "2026-06-30",
+  "rules": [
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
+  ],
+  "assets": {
+    "directory": "./site/public",
+    "run_worker_first": ["/fragments/*", "/healthz"]
+  }
+}

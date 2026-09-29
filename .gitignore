@@ -3,3 +3,8 @@ dist/
 *.wasm
 .tools/
 .freebuff/
+site/worker.js
+site/wasm_exec.js
+site/dist/
+.aws
+.hallmark/

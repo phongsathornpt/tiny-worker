@@ -1,5 +1,5 @@
 // Command tiny-worker is the companion CLI for the tiny-worker framework:
-// it scaffolds projects, lists routes, and builds/deploys workers.
+// it scaffolds REST API projects, lists routes, and builds/deploys workers.
 //
 //	tiny-worker new myworker && cd myworker
 //	tiny-worker build     # TinyGo -> dist/worker.wasm + worker.js glue
@@ -22,7 +22,7 @@ Usage:
 
 Commands:
 
-  new <dir>     Scaffold a new tiny-worker project
+  new <dir>     Scaffold a REST API project with Clean Architecture
   routes        List routes registered via router.Handle (use in project root)
   build         Build worker.wasm and the worker.js glue into dist/
                 flags: -main -out -panic -gc -opt (defaults: trap,
