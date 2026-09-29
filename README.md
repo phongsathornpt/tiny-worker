@@ -5,33 +5,29 @@
 ![TinyGo 0.42](https://img.shields.io/badge/TinyGo-0.42-00ADD8)
 ![hello worker 42.8 KB gzip](https://img.shields.io/badge/hello_worker-42.8_KB_gzip-brightgreen)
 
-A small, dependency-free Go framework for [Cloudflare
-Workers](https://workers.cloudflare.com/), compiled to WebAssembly with
-[TinyGo](https://tinygo.org/). A real router with 404/405 semantics, composable
-middleware, W3C trace-context propagation, request-scoped values, and an
-optional REST layer — with the whole core worker gzipping to **42.8 KB**.
+A small, dependency-free Go framework for [Cloudflare Workers](https://workers.cloudflare.com/),
+compiled to WebAssembly with TinyGo. It provides routing, middleware, tracing,
+request-scoped values, and an optional typed REST layer.
 
-- **Real HTTP semantics** — a trie router, `405` with an `Allow` header, panic →
-  500 without killing the isolate, CORS preflight, `traceparent` in and
-  `traceresponse` out.
-- **Pay only for what you import** — the `rest` layer and its JSON codec are
-  opt-in by import; workers that never touch them stay at 42.8 KB.
-- **No dependencies** — `go.mod` requires nothing but the standard library. Size
-  is a design constraint here, not an afterthought (see [Performance](#performance)).
+The core hello worker is **42.8 KB gzipped**. Importing the REST package adds
+JSON support only when you need it.
+
+**Guide:** [Install](#install) · [Quickstart](#quickstart) · [Examples](#examples) ·
+[CLI](#cli) · [Performance](#performance) · [Framework guide](#framework-guide) ·
+[Testing and development](#testing-and-development)
 
 ## Install
 
-Requires Go 1.27 and [TinyGo 0.42+](https://tinygo.org/getting-started/install/).
-[binaryen](https://github.com/WebAssembly/binaryen) (`wasm-opt`) is optional at
-build time — without it the build warns and skips optimization — but the
-committed size baselines are recorded from optimized artifacts.
+The framework targets Go 1.27 and TinyGo 0.42+. Install the Go module to use
+the framework in your own worker:
 
 ```bash
 go get github.com/phongsathornpt/tiny-worker
-
-# optional CLI: scaffold, list routes, build, dev, deploy
-go install github.com/phongsathornpt/tiny-worker/cmd/tiny-worker@latest
 ```
+
+To install the companion CLI, see [CLI installation](#install-the-cli). Worker
+builds require [TinyGo](https://tinygo.org/getting-started/install/). Binaryen
+(`wasm-opt`) is optional; without it, builds warn and skip size optimization.
 
 ## Quickstart
 
@@ -76,7 +72,7 @@ func main() {
 }
 ```
 
-Scaffold, build, and run it:
+Install the [CLI](#install-the-cli), then scaffold, build, and run it:
 
 ```
 tiny-worker new myworker && cd myworker   # main.go + go.mod + wrangler.jsonc
@@ -158,112 +154,9 @@ tiny-worker build -main ./examples/rest && tiny-worker dev   # or: make wasm-res
 | `DELETE /users/:id` | `204` with no body |
 | `GET /boom` | a deliberate panic (trap + rebuild on Workers) |
 
-Here is a complete REST worker in one file — the same shape as
-[`examples/rest`](examples/rest/main.go), with the store inlined:
-
-```go
-package main
-
-import (
-	"strconv"
-	"sync"
-
-	tinyworker "github.com/phongsathornpt/tiny-worker"
-	"github.com/phongsathornpt/tiny-worker/rest"
-	"github.com/phongsathornpt/tiny-worker/router"
-	"github.com/phongsathornpt/tiny-worker/runtime/cloudflare"
-)
-
-type User struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
-// CreateUser is the POST payload. Unknown JSON fields are rejected by default,
-// so a typo fails with 400 instead of silently creating an empty record.
-type CreateUser struct {
-	Name  string `json:"name" validate:"required,min=2,max=64"`
-	Email string `json:"email" validate:"required,email"`
-}
-
-type userPath struct {
-	ID int `param:"id"`
-}
-
-var (
-	mu    sync.Mutex
-	users = map[int]User{}
-	next  int
-)
-
-func main() {
-	r := router.New()
-	rest.Get(r, "/users", rest.HandlerNoInput(listUsers))
-	rest.Post(r, "/users", rest.Handler(createUser))
-	rest.Get(r, "/users/:id", rest.Handler(getUser))
-	rest.Delete(r, "/users/:id", rest.Handler(deleteUser))
-
-	app := tinyworker.New(nil)
-	app.UseRouter(r)
-	// Errors is outermost, so routing misses, handler errors, and recovered
-	// panics all render the same envelope.
-	app.Use(
-		rest.Errors(),
-		tinyworker.LogRequests(func(method, path string, status int, ms int64) {
-			println("tiny-worker:", method, path, status, ms)
-		}),
-		tinyworker.Recover(),
-	)
-	cloudflare.Register(app)
-	select {}
-}
-
-func listUsers(*tinyworker.Request) ([]User, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	out := make([]User, 0, len(users))
-	for id := 1; id <= next; id++ {
-		if u, ok := users[id]; ok {
-			out = append(out, u)
-		}
-	}
-	return out, nil
-}
-
-func createUser(_ *tinyworker.Request, in CreateUser) (rest.Result, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	next++
-	u := User{ID: next, Name: in.Name, Email: in.Email}
-	users[u.ID] = u
-	return rest.Result{
-		Status:  201,
-		Body:    u,
-		Headers: []tinyworker.Header{{Name: "location", Value: "/users/" + strconv.Itoa(u.ID)}},
-	}, nil
-}
-
-func getUser(_ *tinyworker.Request, p userPath) (User, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	u, ok := users[p.ID]
-	if !ok {
-		return User{}, tinyworker.NotFound("user " + strconv.Itoa(p.ID) + " does not exist")
-	}
-	return u, nil
-}
-
-func deleteUser(_ *tinyworker.Request, p userPath) (rest.Result, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	if _, ok := users[p.ID]; !ok {
-		return rest.Result{}, tinyworker.NotFound("user " + strconv.Itoa(p.ID) + " does not exist")
-	}
-	delete(users, p.ID)
-	return rest.Result{Status: 204}, nil
-}
-```
+The complete REST worker, including its in-memory store and runnable route
+handlers, is in [`examples/rest`](examples/rest/main.go). Use it as a starting
+point for a full application.
 
 Because the router, middleware, and `rest` helpers all speak
 `tinyworker.Handler`, typed handlers drop into an existing app without
@@ -334,16 +227,35 @@ make size-check   # gzip both examples and compare to the baselines
 
 ## CLI
 
-`cmd/tiny-worker` is a companion CLI (stdlib-only):
+`cmd/tiny-worker` is a standard-library-only companion CLI.
+
+### Install the CLI
+
+Install the latest release with Go 1.27 or newer:
+
+```bash
+go install github.com/phongsathornpt/tiny-worker/cmd/tiny-worker@latest
+```
+
+Go installs the executable to `$(go env GOBIN)` when set, or otherwise to
+`$(go env GOPATH)/bin`. Add that directory to your `PATH` if `tiny-worker` is
+not found. From a source checkout, `make cli` installs to
+`$(go env GOPATH)/bin` by default; choose another destination with
+`make cli BIN_DIR=/path/to/bin`.
+
+The CLI commands are:
 
 ```
-make cli                       # build to .tools/bin/tiny-worker
 tiny-worker new myworker       # scaffold a project (main.go, go.mod, wrangler.jsonc)
 tiny-worker routes             # list router.Handle registrations found in source
 tiny-worker build              # TinyGo -> dist/worker.wasm + worker.js glue
 tiny-worker dev                # build + wrangler dev
 tiny-worker deploy             # build + wrangler deploy
 ```
+
+Building a worker requires TinyGo; Binaryen (`wasm-opt`) is optional. `dev`
+and `deploy` also use `npx wrangler` (Node.js/npm required). To install
+Wrangler yourself, run `npm install -g wrangler`.
 
 `routes` is static extraction via `go/ast` — it lists what it can prove from
 source, not dynamic registrations. `build` writes the same worker.js glue as
@@ -379,7 +291,9 @@ The gate needs binaryen (the baselines are recorded from optimized artifacts),
 so it warns and skips where `wasm-opt` is missing — CI always enforces it. The
 current sizes and the native benchmarks are in [Performance](#performance).
 
-## Runtime behavior
+## Framework guide
+
+### Runtime behavior
 
 - **Panic recovery**: TinyGo does not unwind for panics under either strategy,
   so a panic in the request path cannot be recovered inside Go. With the default
@@ -402,7 +316,7 @@ current sizes and the native benchmarks are in [Performance](#performance).
   the runtime is rebuilt inline. `worker.js` accepts both bundler-provided
   `WebAssembly.Module` imports (workerd/wrangler) and raw bytes (tests, Node).
 
-## Routing & status semantics
+### Routing & status semantics
 
 Attach a router to get real 404/405 behavior instead of fall-through to a catch-all:
 
@@ -425,7 +339,7 @@ app.UseRouter(r)
 - Request paths are derived from the URL (`Request.Path`, query string dropped) by
   the bridge; `tinyworker.ParsePath` does the same for plain strings.
 
-## Middleware
+### Middleware
 
 `App.Use` composes middleware around the router (or catch-all handler). The first
 registered middleware is the outermost: it sees the request first and its
@@ -454,7 +368,7 @@ routing; disallowed preflight origins get 403). Handlers returning `StatusError`
 values render their own status; bare `ErrNotFound` maps to 404 everywhere, so
 middleware status inference matches what the bridge sends on the wire.
 
-## Tracing (W3C Trace Context)
+### Tracing (W3C Trace Context)
 
 `tinyworker.Tracing()` implements traceparent propagation:
 
@@ -475,7 +389,7 @@ app.UseRouter(r)
 app.Use(tinyworker.Tracing())
 ```
 
-## Request-scoped values
+### Request-scoped values
 
 Middleware can pass data (auth identity, tracing IDs) to handlers through the request:
 
@@ -492,7 +406,7 @@ request is done. The store is created lazily, so requests that never use it pay
 nothing. `Value[T]` is type-safe — a stored string read as `Get[int]` returns
 `ok=false` — and the generic free functions `Set`/`Get` work for one-off keys.
 
-## REST APIs (`rest` package)
+### REST APIs (`rest` package)
 
 `rest` adds JSON responses, request binding, input validation, and one error
 envelope — additively; the core framework is untouched. Importing it links a
@@ -668,7 +582,9 @@ worker; `rest.WithCodec` does it per call. Strict decoding comes from the
 optional `rest.StrictCodec` interface (`DisallowUnknownFields` in the default
 adapter); a codec that implements only `Codec` decodes leniently.
 
-## Testing the bridge
+## Testing and development
+
+### Testing the bridge
 
 The Cloudflare bridge (`runtime/cloudflare`) is tested under `GOOS=js GOARCH=wasm` with
 [wasmbrowsertest](https://github.com/agnivade/wasmbrowsertest), which runs the tests in
@@ -697,7 +613,7 @@ TinyGo builds with a pinned binaryen (so the size gates compare like for like),
 the gzip size gates for both examples, the artifact smoke tests (hello + rest),
 and a wrangler dry-run bundle on every push and PR.
 
-## Development
+### Development commands
 
 ```bash
 make cli          # build the tiny-worker CLI into $(go env GOPATH)/bin
