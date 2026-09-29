@@ -1,0 +1,8 @@
+{
+  "name": "tiny-worker-example",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-09",
+  "rules": [
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
+  ]
+}

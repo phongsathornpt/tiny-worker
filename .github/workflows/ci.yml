@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Lint & unit tests (native)
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          go test ./...
+
+      - name: Install wasmbrowsertest
+        run: |
+          go install github.com/agnivade/wasmbrowsertest@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Bridge tests (js/wasm in browser)
+        run: GOOS=js GOARCH=wasm go test -exec wasmbrowsertest -v ./runtime/...
+
+      - name: Build TinyGo wasm
+        run: |
+          curl -sSfL https://github.com/tinygo-org/tinygo/releases/download/v0.42.0/tinygo0.42.0.linux-amd64.tar.gz | tar -xz
+          sudo mv tinygo /usr/local/tinygo
+          sudo ln -sf /usr/local/tinygo/bin/tinygo /usr/local/bin/tinygo
+          tinygo version
+          make wasm
+
+      - name: Wrangler dry-run bundle
+        run: npx wrangler deploy --dry-run --outdir=dist
