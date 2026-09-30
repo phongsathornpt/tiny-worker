@@ -624,6 +624,12 @@ go install github.com/agnivade/wasmbrowsertest@latest
 make wasm-test   # skips automatically if no browser is available
 ```
 
+On Ubuntu 23.10+ the kernel blocks Chrome's sandbox by default (`No usable
+sandbox!` on launch); run
+`echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns`
+once to allow it. CI does the same in
+[.github/workflows/ci.yml](.github/workflows/ci.yml).
+
 Those tests run the stock-Go `js/wasm` build. The TinyGo artifacts that actually
 deploy — including anything `wasm-opt` rewrote — are covered separately by
 `make smoke`, which boots each wasm in Node through the bridge and exercises

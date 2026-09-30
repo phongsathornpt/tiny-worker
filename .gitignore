@@ -8,3 +8,4 @@ site/wasm_exec.js
 site/dist/
 .aws
 .hallmark/
+.commandcode/taste/

@@ -28,6 +28,15 @@ jobs:
       - name: Install Chrome
         uses: browser-actions/setup-chrome@v1
 
+      # Ubuntu 23.10+ (incl. the ubuntu-latest runner image) blocks unprivileged
+      # user namespaces via AppArmor, which Chrome needs for its sandbox — without
+      # this it dies with "No usable sandbox!" before running any test. Same fix
+      # wasmbrowsertest's own CI uses:
+      # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
+      - name: Allow Chrome sandbox (AppArmor userns restriction)
+        if: runner.os == 'Linux'
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+
       - name: Bridge tests (js/wasm in browser)
         run: GOOS=js GOARCH=wasm go test -exec wasmbrowsertest -v ./runtime/...
 
