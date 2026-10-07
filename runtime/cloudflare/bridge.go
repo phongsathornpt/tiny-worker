@@ -55,6 +55,14 @@ func serve(in js.Value) any {
 		Headers: headersFromJS(in.Get("headers")),
 		Body:    bytesFromJS(in.Get("body")),
 	}
+	// The invocation env (raw JS object) rides on the request; queue-enabled
+	// workers wrap it with queuebridge.EnvOf. Storing the raw value keeps
+	// this package free of queue imports, so fetch-only workers never link
+	// queue plumbing (pinned by the hello size baseline).
+	if env := in.Get("env"); !env.IsUndefined() && !env.IsNull() {
+		req.Set(envStoreKey, env)
+	}
+
 	res, err := app.Serve(req)
 	if err != nil {
 		return errorResponse(err)
@@ -124,3 +132,8 @@ func bodySize(value js.Value) int {
 func overLimit(size int) bool {
 	return MaxBodyBytes > 0 && size > MaxBodyBytes
 }
+
+// envStoreKey is the request-store key under which the bridge stores the
+// invocation env (a raw js.Value). cloudflare/queuebridge.EnvOf reads it;
+// the string is duplicated there to avoid an import in this direction.
+const envStoreKey = "cloudflare.env"

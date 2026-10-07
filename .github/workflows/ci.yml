@@ -61,5 +61,8 @@ jobs:
       - name: Smoke test the built artifact
         run: make smoke
 
-      - name: Wrangler dry-run bundle
-        run: npx wrangler deploy --dry-run --outdir=dist
+      - name: Wrangler dry-run bundles (root + queue example)
+        run: |
+          npx wrangler deploy --dry-run --outdir=dist
+          cp worker.js wasm_exec.js examples/queue/
+          npx wrangler deploy --dry-run --outdir=examples/queue/dist --config examples/queue/wrangler.jsonc

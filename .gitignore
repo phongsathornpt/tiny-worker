@@ -6,6 +6,9 @@ dist/
 site/worker.js
 site/wasm_exec.js
 site/dist/
+examples/queue/worker.js
+examples/queue/wasm_exec.js
+examples/queue/dist/
 .aws
 .hallmark/
 .commandcode/taste/

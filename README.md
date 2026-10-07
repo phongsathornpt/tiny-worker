@@ -156,6 +156,7 @@ Two complete, buildable programs live under [`examples/`](examples/):
 |---------|----------------------|------|
 | [`examples/hello`](examples/hello/main.go) | router with 404/405, middleware chain (request IDs, tracing, logging, recovery, CORS), request-scoped values, the panic contract | 42.8 KB |
 | [`examples/rest`](examples/rest/main.go) | typed REST handlers, strict JSON binding, query and path binding, validation (tags, `Validatable`, a custom rule), the error envelope, an in-memory store | 288 KB |
+| [`examples/queue`](examples/queue/main.go) | Cloudflare Queues end to end: producer routes, a fail-fast batch consumer, poison-message retry, a deliberate mid-batch trap, per-message ack progress | 42.5 KB |
 
 Build either one and serve it locally:
 
@@ -198,6 +199,7 @@ Measured on the committed artifacts — TinyGo 0.42 with `-opt=z -no-debug
 |--------|----:|-----:|-------|
 | [`examples/hello`](examples/hello/main.go) | 100 KB | **42.8 KB** | core framework only |
 | [`examples/rest`](examples/rest/main.go) | 674 KB | **288 KB** | + `rest` and stdlib `encoding/json` |
+| [`examples/queue`](examples/queue/main.go) | 104 KB | **42.5 KB** | + `queue` (consumer + producer) |
 
 The lean core is a deliberate result: the request path avoids `fmt`, `net/url`,
 `regexp`, and `net/mail` (path parsing and email validation are hand-rolled,
@@ -313,6 +315,7 @@ the opt-in REST layer:
 |----------|---------------|
 | `examples/hello` | `testdata/wasm-size-baseline.txt` |
 | `examples/rest` | `testdata/wasm-size-rest-baseline.txt` |
+| `examples/queue` | `testdata/wasm-size-queue-baseline.txt` |
 
 For intentional growth, run `make size-baseline` and commit the new numbers.
 The gate needs binaryen (the baselines are recorded from optimized artifacts),
@@ -601,6 +604,70 @@ content-type: application/json
 The full program behind this is [`examples/rest`](examples/rest/main.go);
 `make smoke` replays the same contract against the built wasm.
 
+### Cloudflare Queues (`queue` package)
+
+`queue` adds Cloudflare Queues support — consume batches in Go and produce
+messages from fetch handlers — additively and opt-in by import, like `rest`:
+workers that never touch it keep their size, which is what the third size
+baseline measures.
+
+```go
+import (
+    "github.com/phongsathornpt/tiny-worker/queue"
+    "github.com/phongsathornpt/tiny-worker/runtime/cloudflare/queuebridge"
+)
+
+// Consumer: batches in, fail-fast out.
+consumer := queue.New(func(b *queue.Batch) error {
+    for i, m := range b.Messages {
+        if err := process(m); err != nil {
+            b.AckThrough(i - 1) // the acked prefix stays acked
+            return err          // typically *queue.RetryError from m.Retry
+        }
+        b.AckThrough(i)
+    }
+    return nil
+}, &queue.Options{Queue: "ORDERS"})
+consumer.Use(queue.LogBatches(func(res queue.BatchResult) { ... }))
+queuebridge.RegisterQueue(consumer)
+
+// Producer: send from any fetch handler.
+env := queuebridge.EnvOf(req)
+q, err := env.GetQueue("ORDERS")
+q.Send(body) // joins the invocation outbox
+```
+
+Sends accumulate in a per-invocation outbox and flush (coalesced into
+`sendBatch`, chunked at 100, awaited) after the handler returns — a failed
+send fails the request, so callers know the message was not enqueued.
+Consumers that produce flush before the batch resolves; a failure rethrows
+the batch so the unacked tail redelivers with the sends reapplied.
+
+The delivery contract is **at-least-once**: `m.ID` keys idempotency checks,
+`m.Attempts` counts deliveries. Acks cross the boundary as they happen (a
+cumulative watermark via one JS call per advance), so a mid-batch trap —
+unrecoverable under TinyGo's `-panic=trap` — costs only the unacked tail:
+worker.js rebuilds the runtime, acks the recorded prefix, and rethrows for
+redelivery. Batches are fail-fast: the first error stops the batch and the
+tail redelivers in order, so a poison message delays the messages behind it
+(bounded by `max_retries` and the DLQ in wrangler.jsonc — configure those
+there, not in Go). `m.Attempts` is the escape hatch: skip after K attempts
+to break a poison loop.
+
+Decode JSON payloads with the separate `queue/queuejson` package — importing
+it is the only way `encoding/json` links into a queue worker:
+
+```go
+c := queue.New(queuejson.HandleBatchDecode(func(b *queue.Batch, v OrderEvent) error {
+    ...
+}), nil)
+```
+
+The complete consumer + producer worker is [`examples/queue`](examples/queue/main.go)
+(send `"poison"` or `"trap"` as a message body to exercise retry and the
+rebuild-and-rethrow path). Scaffold a queue project with
+`tiny-worker new myworker -queue`.
+
 ### The codec seam
 
 `rest.Codec` is `Marshal`/`Unmarshal` — the same shape as `encoding/json`, so
@@ -614,10 +681,12 @@ adapter); a codec that implements only `Codec` decodes leniently.
 
 ### Testing the bridge
 
-The Cloudflare bridge (`runtime/cloudflare`) is tested under `GOOS=js GOARCH=wasm` with
+The Cloudflare bridges (`runtime/cloudflare` for fetch, `runtime/cloudflare/queuebridge`
+for queues) are tested under `GOOS=js GOARCH=wasm` with
 [wasmbrowsertest](https://github.com/agnivade/wasmbrowsertest), which runs the tests in
 a real Chrome — covering the echo roundtrip, 413 body-limit paths, panic recovery and
-post-panic survival, handler errors, and JS-facing globals:
+post-panic survival, handler errors, JS-facing globals, queue batch decoding, the ack
+watermark, fail-fast retries with delays, and the producer outbox flush:
 
 ```
 go install github.com/agnivade/wasmbrowsertest@latest
@@ -637,7 +706,11 @@ it. The `hello` profile checks the routes, body roundtrip, 404/405 semantics,
 and the panic contract (trap reaches JS, a rebuilt runtime serves again); the
 `rest` profile drives the whole REST contract: strict binding, 400 vs 422,
 envelope details, query/path coercion, the custom rule registry, `Result`
-statuses, and uniform routing-miss envelopes. It skips when node is absent.
+statuses, and uniform routing-miss envelopes; the `queue` profile drives the
+Queues contract end to end against a fake binding — producer flush roundtrip,
+unbound-queue failure, clean-batch acks, poison fail-fast with the retry
+delay, and a mid-batch trap whose recorded ack prefix survives the rebuild.
+It skips when node is absent.
 `make bench` runs the native benchmarks (router dispatch, `ParsePath` —
 allocation-free — and the `rest` binding/validation/rendering paths);
 `make size-check` is the size gate.

@@ -11,10 +11,15 @@ import (
 const frameworkModule = "github.com/phongsathornpt/tiny-worker"
 
 // cmdNew scaffolds a REST API project using Clean Architecture in dir.
+// With -queue, the scaffold also consumes and produces on a Cloudflare
+// Queue: a consumer in internal/queue, producer routes, and the wrangler
+// queues config.
 func cmdNew(args []string) error {
-	// Go's flag package stops at the first positional, so pull -module out
-	// manually to allow both `new dir -module x` and `new -module x dir`.
+	// Go's flag package stops at the first positional, so pull -module and
+	// -queue out manually to allow both `new dir -module x` and
+	// `new -module x dir`.
 	var moduleFlag string
+	wantQueue := false
 	restArgs := args[:0]
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -27,6 +32,8 @@ func cmdNew(args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "-module="):
 			moduleFlag = strings.TrimPrefix(args[i], "-module=")
+		case args[i] == "-queue":
+			wantQueue = true
 		default:
 			restArgs = append(restArgs, args[i])
 		}
@@ -51,6 +58,11 @@ func cmdNew(args []string) error {
 		mod = "example.com/" + filepath.Base(filepath.Clean(dir))
 	}
 	files := newProjectFiles(mod, localFrameworkRoot())
+	if wantQueue {
+		for name, content := range queueProjectFiles(mod, localFrameworkRoot()) {
+			files[name] = content
+		}
+	}
 	if err := writeProject(dir, files); err != nil {
 		return err
 	}

@@ -23,6 +23,7 @@ Usage:
 Commands:
 
   new <dir>     Scaffold a REST API project with Clean Architecture
+                flag: -queue (also consume/produce on a Cloudflare Queue)
   routes        List routes registered via router.Handle (use in project root)
   build         Build worker.wasm and the worker.js glue into dist/
                 flags: -main -out -panic -gc -opt (defaults: trap,

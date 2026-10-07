@@ -11,7 +11,7 @@
 // runtime, and retries — the isolate survives. The profile asserts both halves.
 //
 // Usage: node scripts/smoke-worker.mjs [wasm] [wasm_exec.js] [profile]
-//   profile: hello (default) | rest
+//   profile: hello (default) | rest | queue
 // Skips (exit 0) when the artifacts are absent.
 import { readFileSync, existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -85,7 +85,97 @@ if (typeof globalThis.tinyWorkerFetch !== "function") {
   process.exit(1);
 }
 
-if (profile === "rest") {
+if (profile === "queue") {
+  // The queue profile replicates worker.js's queue-path contract in Node:
+  // a fake env binding records sendBatch calls, the ack ledger mirrors what
+  // worker.js would record via tinyWorkerQueueAck, and a mid-batch trap
+  // must leave the recorded ack prefix intact across a runtime rebuild.
+  const sentBatches = [];
+  const fakeBinding = {
+    sendBatch(messages, delay) {
+      sentBatches.push({ messages: messages.map((m) => new Uint8Array(m.body)), delay });
+      return Promise.resolve();
+    },
+  };
+  const env = { ORDERS: fakeBinding };
+
+  // Ack ledger: the Go bridge calls this on every AckThrough advance.
+  let ackWatermark = 0;
+  globalThis.tinyWorkerQueueAck = (n) => {
+    ackWatermark = n;
+  };
+
+  const callWithEnv = (method, path, body) => {
+    const res = globalThis.tinyWorkerFetch({
+      method, url: `https://smoke.test${path}`, headers: [],
+      body: body ? new TextEncoder().encode(body) : null, env,
+    });
+    return { status: res.status, body: res.body ? decoder.decode(res.body) : "" };
+  };
+
+  const consume = (messages) =>
+    globalThis.tinyWorkerQueueConsume({
+      queue: "tiny-worker-example-orders",
+      env,
+      invocationId: "q-smoke",
+      messages: messages.map((m) => ({
+        id: m.id,
+        body: new TextEncoder().encode(m.body),
+        attempts: m.attempts ?? 1,
+      })),
+    });
+
+  // 1. Producer: /send appends to the outbox, response is 202, and the
+  //    outbox flush carries the exact body to the right binding.
+  const sent = callWithEnv("POST", "/send", "hello-queue");
+  check("POST /send -> 202", sent.status === 202, `got ${sent.status}: ${sent.body}`);
+  const flush = globalThis.tinyWorkerQueueFlush();
+  check("flush carries one message", flush.count === 1, `count=${flush.count}`);
+  const outMsgs = flush.queues && flush.queues.ORDERS;
+  check("flush targets ORDERS", Array.isArray(outMsgs) && outMsgs.length === 1, JSON.stringify(Object.keys(flush.queues ?? {})));
+  check("flush body roundtrips", outMsgs && decoder.decode(new Uint8Array(outMsgs[0].body)) === "hello-queue");
+  check("outbox drained after flush", globalThis.tinyWorkerQueueFlush().count === 0);
+
+  // 2. Missing binding: /send against an env without ORDERS fails loudly.
+  const noBinding = globalThis.tinyWorkerFetch({
+    method: "POST", url: "https://smoke.test/send",
+    headers: [], body: new TextEncoder().encode("x"), env: {},
+  });
+  check("unbound queue -> 500", noBinding.status === 500, `got ${noBinding.status}`);
+
+  // 3. Consumer: a clean batch acks everything.
+  let res = consume([{ id: "a", body: "one" }, { id: "b", body: "two" }, { id: "c", body: "three" }]);
+  check("clean batch watermark 3", res.watermark === 3 && !res.error, `wm=${res.watermark} err=${res.error ?? "-"}`);
+  check("clean batch stats", callWithEnv("GET", "/stats", null).body.includes("acked=3"), callWithEnv("GET", "/stats", null).body);
+
+  // 4. Poison: fail-fast with the requested retry delay; the prefix stays
+  //    acked and only the tail is unacked.
+  res = consume([{ id: "a", body: "one" }, { id: "p", body: "poison" }, { id: "c", body: "three" }]);
+  check("poison watermark 1", res.watermark === 1, `wm=${res.watermark}`);
+  check("poison delay 60", res.delay === 60, `delay=${res.delay}`);
+  check("poison surfaces retry error", (res.error ?? "").includes("retry"), res.error ?? "-");
+
+  // 5. Trap: the runtime dies mid-batch; the ack recorded BEFORE the trap
+  //    must survive (worker.js acks the prefix and rethrows). The
+  //    redelivery (attempts=2) sails through per the Attempts escape hatch.
+  ackWatermark = 0;
+  let trapped = false;
+  try {
+    consume([{ id: "a", body: "one" }, { id: "t", body: "trap" }, { id: "c", body: "three" }]);
+  } catch {
+    trapped = true;
+  }
+  check("trap kills the runtime (expected)", trapped);
+  check("ack prefix survived the trap", ackWatermark === 1, `ledger=${ackWatermark}`);
+
+  await bootRuntime();
+  res = consume([
+    { id: "a", body: "one" },
+    { id: "t", body: "trap", attempts: 2 },
+    { id: "c", body: "three" },
+  ]);
+  check("redelivered trap passes at attempts=2", res.watermark === 3 && !res.error, `wm=${res.watermark} err=${res.error ?? "-"}`);
+} else if (profile === "rest") {
   // 1. Create: typed handler binds, validates, renders 201 JSON.
   const created = post("/users", { name: "Ada", email: "ada@example.com", handle: "ada", tags: ["x"] });
   check("POST /users -> 201", created.status === 201, `got ${created.status}`);

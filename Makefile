@@ -1,10 +1,11 @@
-.PHONY: test fmt check wasm wasm-rest wasm-test install-wasmbrowsertest install-binaryen bench size-baseline size-check smoke dry-run deploy cli site-generate site-build site-dev site-deploy
+.PHONY: test fmt check wasm wasm-rest wasm-queue wasm-test install-wasmbrowsertest install-binaryen bench size-baseline size-check smoke dry-run deploy cli site-generate site-build site-dev site-deploy
 
 TINYGO ?= $(if $(wildcard .tools/tinygo/bin/tinygo),.tools/tinygo/bin/tinygo,tinygo)
 WASM_OPT ?= $(if $(wildcard .tools/binaryen/bin/wasm-opt),.tools/binaryen/bin/wasm-opt,$(shell command -v wasm-opt 2>/dev/null))
 # Tracked (dist/ is gitignored) so CI and local runs compare one baseline.
 SIZE_BASELINE_FILE ?= testdata/wasm-size-baseline.txt
 REST_SIZE_BASELINE_FILE ?= testdata/wasm-size-rest-baseline.txt
+QUEUE_SIZE_BASELINE_FILE ?= testdata/wasm-size-queue-baseline.txt
 
 test:
 	go test ./...
@@ -72,26 +73,38 @@ wasm:
 wasm-rest:
 	$(call build_wasm,dist/rest/worker.wasm,./examples/rest)
 
+# The queue example (queue package, no JSON codec). Gated against its own
+# baseline so queue support is measured separately from the lean core.
+# The wasm lands in the example's own dist/ and reuses the repo-root glue
+# (same ./dist/worker.wasm import shape), so the example is a self-contained
+# wrangler project: npx wrangler dev --config examples/queue/wrangler.jsonc
+wasm-queue: wasm
+	$(call build_wasm,examples/queue/dist/worker.wasm,./examples/queue)
+	cp wasm_exec.js examples/queue/wasm_exec.js
+
 # Size gate: gzip each built example and compare against its committed
 # baseline. Growth beyond the ratchet fails; shrinkage ratchets it down.
 # Needs wasm-opt (binaryen) for a comparable artifact — without it the gate
 # warns and skips, matching the build's warn+skip behavior.
 SIZE_RATCHET ?= 2
-size-check: wasm wasm-rest
+size-check: wasm wasm-rest wasm-queue
 	@WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh $(SIZE_BASELINE_FILE) $(SIZE_RATCHET)
 	@WASM=dist/rest/worker.wasm WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh $(REST_SIZE_BASELINE_FILE) $(SIZE_RATCHET)
+	@WASM=examples/queue/dist/worker.wasm WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh $(QUEUE_SIZE_BASELINE_FILE) $(SIZE_RATCHET)
 
 # Records the current gzipped sizes as the baselines (commit the result).
-size-baseline: wasm wasm-rest
+size-baseline: wasm wasm-rest wasm-queue
 	@WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh --write $(SIZE_BASELINE_FILE) 0
 	@WASM=dist/rest/worker.wasm WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh --write $(REST_SIZE_BASELINE_FILE) 0
+	@WASM=examples/queue/dist/worker.wasm WASM_OPT=$(WASM_OPT) bash ./scripts/size-gate.sh --write $(QUEUE_SIZE_BASELINE_FILE) 0
 
 # Boots the built artifacts in Node and exercises them: proves the wasm-opt'd
 # output still works (the size gate alone cannot). Skips without node.
-smoke: wasm wasm-rest
+smoke: wasm wasm-rest wasm-queue
 	@command -v node >/dev/null 2>&1 || { echo "smoke: node not found, skipping"; exit 0; }
 	node scripts/smoke-worker.mjs dist/worker.wasm wasm_exec.js hello
 	node scripts/smoke-worker.mjs dist/rest/worker.wasm wasm_exec.js rest
+	node scripts/smoke-worker.mjs examples/queue/dist/worker.wasm wasm_exec.js queue
 
 # Builds the wasm bundle and deploys the worker to Cloudflare.
 dry-run: wasm
