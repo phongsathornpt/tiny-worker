@@ -57,8 +57,12 @@ func callConsume(t *testing.T, payload js.Value) (watermark, delay int, errMsg s
 	if !ok {
 		t.Fatal("consume returned no js.Value")
 	}
-	watermark = res.Get("watermark").Int()
-	delay = res.Get("delay").Int()
+	if value := res.Get("watermark"); !value.IsUndefined() {
+		watermark = value.Int()
+	}
+	if value := res.Get("delay"); !value.IsUndefined() {
+		delay = value.Int()
+	}
 	if e := res.Get("error"); !e.IsUndefined() {
 		errMsg = e.String()
 	}
@@ -68,8 +72,19 @@ func callConsume(t *testing.T, payload js.Value) (watermark, delay int, errMsg s
 
 // buildQueueConsumer registers a consumer for the duration of one test,
 // cleaning up the JS globals the bridge publishes.
-func buildQueueConsumer(t *testing.T, c *queue.Consumer) {
+func buildQueueConsumer(t *testing.T, c *queue.Consumer) *int {
 	t.Helper()
+	ackedThrough := 0
+	ackFunc := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) != 1 {
+			t.Errorf("tinyWorkerQueueAck received %d arguments, want 1", len(args))
+			return nil
+		}
+		ackedThrough = args[0].Int()
+		return nil
+	})
+	js.Global().Set("tinyWorkerQueueAck", ackFunc)
+
 	RegisterQueue(c)
 	t.Cleanup(func() {
 		queueConsumer = nil
@@ -83,7 +98,10 @@ func buildQueueConsumer(t *testing.T, c *queue.Consumer) {
 		}
 		js.Global().Delete("tinyWorkerQueueConsume")
 		js.Global().Delete("tinyWorkerQueueFlush")
+		js.Global().Delete("tinyWorkerQueueAck")
+		ackFunc.Release()
 	})
+	return &ackedThrough
 }
 
 func TestQueueConsumeDecodesBatchAndAcksAll(t *testing.T) {
@@ -115,7 +133,7 @@ func TestQueueConsumeDecodesBatchAndAcksAll(t *testing.T) {
 }
 
 func TestQueueConsumeFailFastWatermarkAndDelay(t *testing.T) {
-	buildQueueConsumer(t, queue.New(queue.Handle(func(m *queue.Message) error {
+	ackedThrough := buildQueueConsumer(t, queue.New(queue.Handle(func(m *queue.Message) error {
 		if m.ID == "poison" {
 			return m.Retry(90)
 		}
@@ -130,6 +148,9 @@ func TestQueueConsumeFailFastWatermarkAndDelay(t *testing.T) {
 	}
 	if wm != 1 || delay != 90 {
 		t.Fatalf("watermark=%d delay=%d, want 1/90", wm, delay)
+	}
+	if *ackedThrough != 1 {
+		t.Fatalf("mirrored ack watermark=%d, want 1", *ackedThrough)
 	}
 }
 
