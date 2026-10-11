@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: SemVer increment after the initial v0.1.0 release
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check branch, CI result, and existing release tag
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Release workflow must run from main (got $GITHUB_REF)." >&2
+            exit 1
+          fi
+
+          git fetch --quiet origin main
+          main_sha="$(git rev-parse FETCH_HEAD)"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main_sha"; then
+            echo "The selected commit is no longer reachable from main." >&2
+            exit 1
+          fi
+
+          ci_success="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_branch == "main" and .conclusion == "success")] | length > 0')"
+          if [[ "$ci_success" != "true" ]]; then
+            echo "No successful CI push run was found for $GITHUB_SHA on main." >&2
+            exit 1
+          fi
+
+          stable_tag_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          existing_tag=""
+          while IFS= read -r tag; do
+            [[ "$tag" =~ $stable_tag_re ]] || continue
+            if [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]]; then
+              existing_tag="$tag"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-version:refname)
+
+          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
+          echo "existing_tag=$existing_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create or recover release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BUMP: ${{ inputs.bump }}
+          MAIN_SHA: ${{ steps.preflight.outputs.main_sha }}
+          EXISTING_TAG: ${{ steps.preflight.outputs.existing_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$EXISTING_TAG" ]]; then
+            if gh release view "$EXISTING_TAG" >/dev/null 2>&1; then
+              echo "$EXISTING_TAG already has a GitHub Release; nothing to do."
+              exit 0
+            fi
+            release_tag="$EXISTING_TAG"
+          else
+            if [[ "$MAIN_SHA" != "$GITHUB_SHA" ]]; then
+              echo "main advanced after this workflow was dispatched; start a new release run." >&2
+              exit 1
+            fi
+
+            release_tag="$(python3 scripts/calculate-release-version.py "$RELEASE_BUMP")"
+            if git show-ref --verify --quiet "refs/tags/$release_tag"; then
+              echo "Tag $release_tag already exists but does not point to this commit." >&2
+              exit 1
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$release_tag" -m "Release $release_tag"
+            git push origin "refs/tags/$release_tag"
+          fi
+
+          gh release create "$release_tag" \
+            --verify-tag \
+            --title "$release_tag" \
+            --generate-notes
+
+          echo "Released $release_tag from $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

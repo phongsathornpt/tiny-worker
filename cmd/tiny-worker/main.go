@@ -10,9 +10,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 )
 
-const version = "0.1.0"
+func version() string {
+	info, ok := debug.ReadBuildInfo()
+	if ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
 
 const usage = `tiny-worker is the companion CLI for the tiny-worker framework.
 
@@ -66,7 +73,7 @@ func dispatch(cmd string, args []string) error {
 	case "dev":
 		return cmdDev(args)
 	case "version", "-v", "--version":
-		fmt.Println("tiny-worker CLI", version)
+		fmt.Println("tiny-worker CLI", version())
 		return nil
 	case "help", "-h", "--help":
 		fmt.Println(usage)
