@@ -277,11 +277,14 @@ tiny-worker dev                # build + wrangler dev
 tiny-worker deploy             # build + wrangler deploy
 ```
 
-The scaffold includes `internal/handler`, `internal/usecase`, `internal/model`,
-`internal/repository`, `pkg/middleware`, and `pkg/utils`, plus versioned CRUD
-routes under `/api/v1/users` and a `/healthz` endpoint. Its in-memory
-repository is an example only; Worker isolates are ephemeral, so production
-data needs durable storage.
+The scaffold uses strict Clean Architecture: `internal/domain` is the single
+source of truth for business entities, errors, and repository contracts;
+`internal/usecase` implements application behavior; handlers own transport
+DTOs; and repository adapters implement domain contracts. App-specific code
+stays under `internal/`. The scaffold includes versioned CRUD routes under
+`/api/v1/users` and a `/healthz` endpoint. Its in-memory repository is an
+example only; Worker isolates are ephemeral, so production data needs durable
+storage.
 
 Building a worker requires TinyGo; Binaryen (`wasm-opt`) is optional. `dev`
 and `deploy` also use `npx wrangler` (Node.js/npm required). To install

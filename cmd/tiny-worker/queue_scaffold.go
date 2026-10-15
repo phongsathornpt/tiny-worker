@@ -23,9 +23,9 @@ import (
 	"github.com/phongsathornpt/tiny-worker/runtime/cloudflare/queuebridge"
 	"` + module + `/internal/handler"
 	"` + module + `/internal/queue"
+	"` + module + `/internal/middleware"
 	"` + module + `/internal/repository"
 	"` + module + `/internal/usecase"
-	"` + module + `/pkg/middleware"
 )
 
 func main() {

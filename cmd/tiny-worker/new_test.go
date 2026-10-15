@@ -13,12 +13,11 @@ func TestNewProjectFilesContainsCleanArchitectureRESTScaffold(t *testing.T) {
 		"README.md",
 		"go.mod",
 		"main.go",
+		"internal/domain/user.go",
 		"internal/handler/users.go",
-		"internal/model/user.go",
+		"internal/middleware/middleware.go",
 		"internal/repository/memory.go",
 		"internal/usecase/users.go",
-		"pkg/middleware/middleware.go",
-		"pkg/utils/location.go",
 		"wrangler.jsonc",
 	}
 	for _, name := range wantFiles {
@@ -27,16 +26,35 @@ func TestNewProjectFilesContainsCleanArchitectureRESTScaffold(t *testing.T) {
 		}
 	}
 	for name, want := range map[string]string{
-		"go.mod":                        "replace github.com/phongsathornpt/tiny-worker => /workspace/tiny-worker",
-		"main.go":                       "handler.RegisterUserRoutes(r, userUsecase)",
-		"internal/handler/users.go":     "rest.Post(r, \"/api/v1/users\"",
-		"internal/usecase/users.go":     "type UserRepository interface",
-		"internal/repository/memory.go": "Worker isolates are",
-		"pkg/middleware/middleware.go":  "rest.Errors()",
-		"README.md":                     "Clean Architecture",
+		"go.mod":                            "replace github.com/phongsathornpt/tiny-worker => /workspace/tiny-worker",
+		"main.go":                           "handler.RegisterUserRoutes(r, userUsecase)",
+		"internal/domain/user.go":           "type User struct",
+		"internal/handler/users.go":         "rest.Post(r, \"/api/v1/users\"",
+		"internal/middleware/middleware.go": "rest.Errors()",
+		"internal/repository/memory.go":     "Worker isolates are",
+		"internal/usecase/users.go":         "repository domain.UserRepository",
+		"README.md":                         "single source of truth for business",
 	} {
 		if !strings.Contains(files[name], want) {
 			t.Errorf("%s does not contain %q", name, want)
+		}
+	}
+	if strings.Contains(files["internal/usecase/users.go"], "type UserRepository interface") {
+		t.Error("repository contract must have one owner in internal/domain")
+	}
+	if strings.Contains(files["internal/repository/memory.go"], "type User struct") {
+		t.Error("domain entity must have one owner in internal/domain")
+	}
+	if !strings.Contains(files["internal/domain/user.go"], "type UserRepository interface") ||
+		!strings.Contains(files["internal/domain/user.go"], "var ErrUserNotFound") {
+		t.Error("domain entity, errors, and repository contract must share the domain source")
+	}
+	if strings.Contains(files["internal/domain/user.go"], "json:") {
+		t.Error("domain entity must not own HTTP JSON representation")
+	}
+	for _, removed := range []string{"internal/model/user.go", "pkg/middleware/middleware.go", "pkg/utils/location.go"} {
+		if _, ok := files[removed]; ok {
+			t.Errorf("legacy scaffold path still present: %q", removed)
 		}
 	}
 }

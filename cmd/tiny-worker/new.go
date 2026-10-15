@@ -119,17 +119,16 @@ func writeProject(dir string, files map[string]string) error {
 
 func newProjectFiles(module, localFrameworkPath string) map[string]string {
 	return map[string]string{
-		".gitignore":                    ".wrangler/\ndist/\n*.wasm\n.tools/\n",
-		"README.md":                     projectReadmeTmpl(),
-		"go.mod":                        goModTmpl(module, localFrameworkPath),
-		"main.go":                       projectMainTmpl(module),
-		"internal/handler/users.go":     handlerTmpl(module),
-		"internal/model/user.go":        modelTmpl(),
-		"internal/repository/memory.go": repositoryTmpl(module),
-		"internal/usecase/users.go":     usecaseTmpl(module),
-		"pkg/middleware/middleware.go":  middlewareTmpl(),
-		"pkg/utils/location.go":         utilsTmpl(),
-		"wrangler.jsonc":                wranglerTmpl(),
+		".gitignore":                        ".wrangler/\ndist/\n*.wasm\n.tools/\n",
+		"README.md":                         projectReadmeTmpl(),
+		"go.mod":                            goModTmpl(module, localFrameworkPath),
+		"main.go":                           projectMainTmpl(module),
+		"internal/domain/user.go":           domainTmpl(),
+		"internal/handler/users.go":         handlerTmpl(module),
+		"internal/middleware/middleware.go": middlewareTmpl(),
+		"internal/repository/memory.go":     repositoryTmpl(module),
+		"internal/usecase/users.go":         usecaseTmpl(module),
+		"wrangler.jsonc":                    wranglerTmpl(),
 	}
 }
 
@@ -168,9 +167,9 @@ import (
 	"github.com/phongsathornpt/tiny-worker/router"
 	"github.com/phongsathornpt/tiny-worker/runtime/cloudflare"
 	"` + module + `/internal/handler"
+	"` + module + `/internal/middleware"
 	"` + module + `/internal/repository"
 	"` + module + `/internal/usecase"
-	"` + module + `/pkg/middleware"
 )
 
 func main() {
@@ -198,8 +197,7 @@ import (
 	tinyworker "github.com/phongsathornpt/tiny-worker"
 	"github.com/phongsathornpt/tiny-worker/rest"
 	"github.com/phongsathornpt/tiny-worker/router"
-	"` + module + `/internal/model"
-	"` + module + `/pkg/utils"
+	"` + module + `/internal/domain"
 )
 
 type userPath struct {
@@ -217,12 +215,32 @@ type updateUserRequest struct {
 	Email string ` + "`json:\"email\" validate:\"required,email\"`" + `
 }
 
+// userResponse is an HTTP representation of the domain user. JSON tags and
+// other transport details stay outside internal/domain.
+type userResponse struct {
+	ID    int    ` + "`json:\"id\"`" + `
+	Name  string ` + "`json:\"name\"`" + `
+	Email string ` + "`json:\"email\"`" + `
+}
+
+func presentUser(user domain.User) userResponse {
+	return userResponse{ID: user.ID, Name: user.Name, Email: user.Email}
+}
+
+func presentUsers(users []domain.User) []userResponse {
+	responses := make([]userResponse, 0, len(users))
+	for _, user := range users {
+		responses = append(responses, presentUser(user))
+	}
+	return responses
+}
+
 // UserService is the handler's application seam.
 type UserService interface {
-	List() []model.User
-	Get(id int) (model.User, error)
-	Create(name, email string) (model.User, error)
-	Update(id int, name, email string) (model.User, error)
+	List() []domain.User
+	Get(id int) (domain.User, error)
+	Create(name, email string) (domain.User, error)
+	Update(id int, name, email string) (domain.User, error)
 	Delete(id int) error
 }
 
@@ -230,23 +248,23 @@ func RegisterUserRoutes(r *router.Router, users UserService) {
 	rest.Get(r, "/healthz", rest.HandlerNoInput(func(*tinyworker.Request) (map[string]string, error) {
 		return map[string]string{"status": "ok"}, nil
 	}))
-	rest.Get(r, "/api/v1/users", rest.HandlerNoInput(func(*tinyworker.Request) ([]model.User, error) {
-		return users.List(), nil
+	rest.Get(r, "/api/v1/users", rest.HandlerNoInput(func(*tinyworker.Request) ([]userResponse, error) {
+		return presentUsers(users.List()), nil
 	}))
 	rest.Post(r, "/api/v1/users", rest.Handler(func(_ *tinyworker.Request, in createUserRequest) (rest.Result, error) {
 		user, err := users.Create(in.Name, in.Email)
 		if err != nil {
 			return rest.Result{}, err
 		}
-		return rest.Result{Status: 201, Body: user, Headers: []tinyworker.Header{{Name: "location", Value: utils.ResourceLocation("/api/v1/users", user.ID)}}}, nil
+		return rest.Result{Status: 201, Body: presentUser(user), Headers: []tinyworker.Header{{Name: "location", Value: resourceLocation("/api/v1/users", user.ID)}}}, nil
 	}))
-	rest.Get(r, "/api/v1/users/:id", rest.Handler(func(_ *tinyworker.Request, in userPath) (model.User, error) {
+	rest.Get(r, "/api/v1/users/:id", rest.Handler(func(_ *tinyworker.Request, in userPath) (userResponse, error) {
 		user, err := users.Get(in.ID)
-		return user, httpError(err, in.ID)
+		return presentUser(user), httpError(err, in.ID)
 	}))
-	rest.Put(r, "/api/v1/users/:id", rest.Handler(func(_ *tinyworker.Request, in updateUserRequest) (model.User, error) {
+	rest.Put(r, "/api/v1/users/:id", rest.Handler(func(_ *tinyworker.Request, in updateUserRequest) (userResponse, error) {
 		user, err := users.Update(in.ID, in.Name, in.Email)
-		return user, httpError(err, in.ID)
+		return presentUser(user), httpError(err, in.ID)
 	}))
 	rest.Delete(r, "/api/v1/users/:id", rest.Handler(func(_ *tinyworker.Request, in userPath) (rest.Result, error) {
 		if err := users.Delete(in.ID); err != nil {
@@ -257,25 +275,42 @@ func RegisterUserRoutes(r *router.Router, users UserService) {
 }
 
 func httpError(err error, id int) error {
-	if errors.Is(err, model.ErrUserNotFound) {
+	if errors.Is(err, domain.ErrUserNotFound) {
 		return tinyworker.NotFound("user " + strconv.Itoa(id) + " does not exist")
 	}
 	return err
 }
+
+func resourceLocation(collection string, id int) string {
+	return collection + "/" + strconv.Itoa(id)
+}
 `
 }
 
-func modelTmpl() string {
-	return `package model
+func domainTmpl() string {
+	return `// Package domain is the single source of truth for business entities,
+// domain errors, and repository contracts. Outer layers depend on these types;
+// transport DTOs belong in their adapters.
+package domain
 
 import "errors"
 
 var ErrUserNotFound = errors.New("user not found")
 
 type User struct {
-	ID    int    ` + "`json:\"id\"`" + `
-	Name  string ` + "`json:\"name\"`" + `
-	Email string ` + "`json:\"email\"`" + `
+	ID    int
+	Name  string
+	Email string
+}
+
+// UserRepository is the persistence contract required by the application.
+// Implementations live in outer adapter packages.
+type UserRepository interface {
+	List() []User
+	Get(id int) (User, bool)
+	Create(name, email string) User
+	Update(id int, name, email string) (User, bool)
+	Delete(id int) bool
 }
 `
 }
@@ -284,50 +319,40 @@ func usecaseTmpl(module string) string {
 	return `package usecase
 
 import (
-	"` + module + `/internal/model"
+	"` + module + `/internal/domain"
 )
 
-// UserRepository is the persistence port required by the application layer.
-// Concrete adapters live in internal/repository and are wired in main.go.
-type UserRepository interface {
-	List() []model.User
-	Get(id int) (model.User, bool)
-	Create(name, email string) model.User
-	Update(id int, name, email string) (model.User, bool)
-	Delete(id int) bool
-}
-
 type Users struct {
-	repository UserRepository
+	repository domain.UserRepository
 }
 
-func NewUsers(repository UserRepository) *Users { return &Users{repository: repository} }
+func NewUsers(repository domain.UserRepository) *Users { return &Users{repository: repository} }
 
-func (u *Users) List() []model.User { return u.repository.List() }
+func (u *Users) List() []domain.User { return u.repository.List() }
 
-func (u *Users) Get(id int) (model.User, error) {
+func (u *Users) Get(id int) (domain.User, error) {
 	user, ok := u.repository.Get(id)
 	if !ok {
-		return model.User{}, model.ErrUserNotFound
+		return domain.User{}, domain.ErrUserNotFound
 	}
 	return user, nil
 }
 
-func (u *Users) Create(name, email string) (model.User, error) {
+func (u *Users) Create(name, email string) (domain.User, error) {
 	return u.repository.Create(name, email), nil
 }
 
-func (u *Users) Update(id int, name, email string) (model.User, error) {
+func (u *Users) Update(id int, name, email string) (domain.User, error) {
 	user, ok := u.repository.Update(id, name, email)
 	if !ok {
-		return model.User{}, model.ErrUserNotFound
+		return domain.User{}, domain.ErrUserNotFound
 	}
 	return user, nil
 }
 
 func (u *Users) Delete(id int) error {
 	if !u.repository.Delete(id) {
-		return model.ErrUserNotFound
+		return domain.ErrUserNotFound
 	}
 	return nil
 }
@@ -340,7 +365,7 @@ func repositoryTmpl(module string) string {
 import (
 	"sync"
 
-	"` + module + `/internal/model"
+	"` + module + `/internal/domain"
 )
 
 // MemoryUserRepository is a scaffold example only. Worker isolates are
@@ -348,17 +373,17 @@ import (
 type MemoryUserRepository struct {
 	mu   sync.Mutex
 	next int
-	data map[int]model.User
+	data map[int]domain.User
 }
 
 func NewMemoryUserRepository() *MemoryUserRepository {
-	return &MemoryUserRepository{data: make(map[int]model.User)}
+	return &MemoryUserRepository{data: make(map[int]domain.User)}
 }
 
-func (r *MemoryUserRepository) List() []model.User {
+func (r *MemoryUserRepository) List() []domain.User {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	users := make([]model.User, 0, len(r.data))
+	users := make([]domain.User, 0, len(r.data))
 	for id := 1; id <= r.next; id++ {
 		if user, ok := r.data[id]; ok {
 			users = append(users, user)
@@ -367,29 +392,29 @@ func (r *MemoryUserRepository) List() []model.User {
 	return users
 }
 
-func (r *MemoryUserRepository) Get(id int) (model.User, bool) {
+func (r *MemoryUserRepository) Get(id int) (domain.User, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	user, ok := r.data[id]
 	return user, ok
 }
 
-func (r *MemoryUserRepository) Create(name, email string) model.User {
+func (r *MemoryUserRepository) Create(name, email string) domain.User {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.next++
-	user := model.User{ID: r.next, Name: name, Email: email}
+	user := domain.User{ID: r.next, Name: name, Email: email}
 	r.data[user.ID] = user
 	return user
 }
 
-func (r *MemoryUserRepository) Update(id int, name, email string) (model.User, bool) {
+func (r *MemoryUserRepository) Update(id int, name, email string) (domain.User, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.data[id]; !ok {
-		return model.User{}, false
+		return domain.User{}, false
 	}
-	user := model.User{ID: id, Name: name, Email: email}
+	user := domain.User{ID: id, Name: name, Email: email}
 	r.data[id] = user
 	return user, true
 }
@@ -429,17 +454,6 @@ func UseDefaults(app *tinyworker.App) {
 `
 }
 
-func utilsTmpl() string {
-	return `package utils
-
-import "strconv"
-
-func ResourceLocation(collection string, id int) string {
-	return collection + "/" + strconv.Itoa(id)
-}
-`
-}
-
 func wranglerTmpl() string {
 	return `{
   "name": "my-worker",
@@ -455,9 +469,17 @@ func wranglerTmpl() string {
 func projectReadmeTmpl() string {
 	return `# Cloudflare REST API worker
 
-This project is scaffolded with tiny-worker and uses a Clean Architecture
-layout. HTTP handlers call use cases; use cases depend on a repository
-interface; ` + "`main.go`" + ` wires the concrete repository and Cloudflare runtime.
+This project is scaffolded with tiny-worker and uses a strict Clean Architecture
+layout. ` + "`internal/domain`" + ` is the single source of truth for business
+entities, domain errors, and repository contracts. HTTP request and response
+types belong to the handler and never replace the domain entity.
+
+- ` + "`internal/domain`" + ` owns domain types and repository contracts.
+- ` + "`internal/usecase`" + ` implements application behavior using domain contracts.
+- ` + "`internal/handler`" + ` translates HTTP requests and responses to use cases.
+- ` + "`internal/repository`" + ` contains persistence adapters that implement domain contracts.
+- ` + "`internal/middleware`" + ` contains worker-wide HTTP middleware.
+- ` + "`main.go`" + ` wires adapters and the Cloudflare runtime; dependencies point inward.
 
 The included in-memory repository is for local examples. Cloudflare Worker
 isolates can be restarted, so use a durable service such as D1, KV, or a
